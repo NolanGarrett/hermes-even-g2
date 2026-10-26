@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-even-g2"
+version = "0.1.0a1"
+description = "Independent Even G2 voice/text companion for Hermes Agent (hardware unverified)"
+requires-python = ">=3.14,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["aiohttp>=3.13,<4"]
+
+[tool.setuptools.packages.find]
+include = ["even_g2*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

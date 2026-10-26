@@ -1,0 +1,49 @@
+name: software-verification
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: companion/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - name: Public supported Hermes runtime
+        run: |
+          git clone --depth 1 --branch v0.22.5 https://github.com/NousResearch/hermes-agent.git ../upstream-hermes
+          cd ../upstream-hermes
+          uv sync --frozen
+          uv --no-config pip install --python .venv/bin/python aiohttp==3.14.5 pytest==9.1.1 pytest-asyncio==1.4.1
+      - name: Companion tests and build
+        working-directory: companion
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm test
+          npm run build
+          npm run pack
+      - name: Real broker and composed public-runtime harness
+        env:
+          HERMES_TEST_ROOT: ${{ github.workspace }}/../upstream-hermes
+        run: ../upstream-hermes/.venv/bin/python -m pytest -q
+      - name: Browser simulator
+        working-directory: companion
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - name: Package exact source and templates
+        run: python scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-unverified-preview
+          path: release/*

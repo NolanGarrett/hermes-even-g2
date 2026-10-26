@@ -1,0 +1,14 @@
+{
+  "package_id": "org.community.hermesg2",
+  "edition": "202601",
+  "name": "Hermes G2 Preview",
+  "version": "0.1.0",
+  "min_app_version": "2.2.10",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {"name": "network", "desc": "Connect to your privately hosted Hermes G2 broker; no third-party keys on the phone.", "whitelist": ["https://g2.example.com"]},
+    {"name": "g2-microphone", "desc": "Capture up to 30 seconds only after an explicit tap or hold, then transcribe on your server."}
+  ],
+  "supported_languages": ["en"]
+}

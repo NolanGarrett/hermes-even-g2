@@ -1,0 +1,32 @@
+name: hermes-even-g2
+version: 0.1.0a1
+description: Private voice-in/text-out Even G2 companion broker; HARDWARE UNVERIFIED
+license: MIT
+requires_hermes: ">=0.22.5,<0.22.6"
+manifest_version: 2
+provides_tools: []
+provides_hooks: []
+python_dependencies:
+  - "aiohttp>=3.13,<4"
+config_schema:
+  backend_url:
+    type: str
+    default: http://127.0.0.1:8642
+    description: Existing Hermes API origin, optionally with a routed profile prefix
+  origins:
+    type: list
+    default: []
+    description: Exact trusted companion WebView HTTPS origins; never wildcard or null
+  device_hashes:
+    type: dict
+    default: {}
+    description: Device name to SHA256 digest of a separately provisioned 32+ character random token
+  port:
+    type: int
+    default: 8766
+  stt_url:
+    type: str
+    default: https://api.openai.com/v1/audio/transcriptions
+  stt_model:
+    type: str
+    default: whisper-1

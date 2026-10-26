@@ -1,0 +1,33 @@
+import {test,expect} from '@playwright/test';
+
+test('phone simulator: voice, pagination, consent, cancellation, reconnect',async({page})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/?simulator=1');
+  await expect(page.locator('#mode')).toContainText('mock STT');
+  await expect(page.locator('#state')).toHaveText('idle');
+  await page.locator('#record').click();
+  await expect(page.locator('#state')).toHaveText('listening');
+  await page.locator('#synthetic').click();await page.locator('#record').click();
+  await expect(page.locator('#state')).toHaveText('answering',{timeout:10000});
+  await page.locator('#text').fill('long');await page.locator('#send').click();
+  await expect(page.locator('#state')).toHaveText('answering',{timeout:10000});
+  await expect(page.locator('#display')).toContainText('1/');await page.locator('#next').click();
+  await expect(page.locator('#display')).toContainText('2/');
+  await page.locator('#text').fill('approval');await page.locator('#send').click();
+  await expect(page.locator('#state')).toHaveText('approval',{timeout:10000});
+  await expect(page.locator('#approvals')).toContainText('Read the complete request');
+  await page.getByRole('button',{name:'Deny',exact:true}).click();
+  await expect(page.locator('#state')).toHaveText('answering');
+  await expect(page.locator('#display')).toContainText('deny. No tool ran.');
+  await page.locator('#text').fill('wait');await page.locator('#send').click();
+  await expect(page.locator('#state')).toHaveText('working');
+  await page.locator('#cancel').click();
+  await expect(page.locator('#state')).toHaveText('idle',{timeout:10000});
+  await page.locator('#reconnect').click();
+  await expect(page.locator('#state')).toHaveText('idle');
+  await page.locator('#new').click();
+  await expect(page.locator('#state')).toHaveText('idle');
+  await page.screenshot({path:'../docs/simulator.png',fullPage:true});
+  expect(errors).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
