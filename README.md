@@ -36,6 +36,7 @@ This is a software-qualified preview, not a claim of tested glasses, Bluetooth, 
    hermes plugins install NolanGarrett/hermes-even-g2 --enable
    ```
    The GitHub release's plugin ZIP is an alternative directory install; it is not a PyPI package.
+   Accept the dependency prompt; unattended installs require explicit `--yes-deps`. Verify the plugin is enabled, not merely downloaded.
 3. Configure the broker's exact trusted WebView origin and device token hash. Supply `EVEN_G2_BACKEND_KEY` and, for a remote STT provider, `EVEN_G2_STT_KEY` in the server process environment. Never put these keys into the companion.
 4. Run `hermes even-g2 check`, then explicitly run `hermes even-g2 serve` behind your private HTTPS reverse proxy. This project does not configure your VPN, TLS, firewall or service manager.
 5. Clone/download the source, set your broker's exact HTTPS origin in `companion/app.json` network whitelist, and build:

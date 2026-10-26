@@ -31,12 +31,14 @@ hermes plugins install NolanGarrett/hermes-even-g2 --enable
 hermes plugins list
 ```
 
+Accept the declared Python dependency preparation when prompted. For an unattended install where you intentionally consent to those dependencies, append `--yes-deps` as well as `--enable`. Without dependency consent, upstream can return exit0 with the plugin **installed but disabled**; verify `hermes plugins list --plain --no-bundled` reports `enabled`, then run `hermes even-g2 check`. This behavior was exercised from a clean public install.
+
 For reproducibility append `--ref FULL_40_CHARACTER_RELEASE_COMMIT` using the actual commit shown on the GitHub release (not that placeholder, not a tag). Hermes 0.22.5 verifies a full immutable SHA.
 
 Offline/directory alternative: unpack the release plugin ZIP, containing a top-level `hermes-even-g2/`, into `$HERMES_HOME/plugins/` (normally `~/.hermes/plugins/`), then:
 
 ```sh
-hermes plugins doctor "$HERMES_HOME/plugins/hermes-even-g2" --ci
+hermes plugins doctor "${HERMES_HOME:-$HOME/.hermes}/plugins/hermes-even-g2" --ci
 hermes plugins enable hermes-even-g2
 ```
 
