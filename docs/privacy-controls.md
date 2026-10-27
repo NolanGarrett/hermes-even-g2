@@ -12,20 +12,38 @@ Phone localStorage contains only origin-bound session/turn IDs and pending stop 
 
 ## Sessions and reconnect
 
+Before restoring a saved turn, the client looks up its existing broker session
+without creating one. Missing or inaccessible sessions remain unknown across
+reconnect/reload. The explicit phone-only local-forget confirmation starts a new
+conversation; it neither declares prior effects absent nor alters server history.
+Missing-intent reconciliation is valid only within a session the current ledger
+still holds. Restoring an older ledger that omits accepted work is forbidden:
+an existence lookup cannot detect rollback within an otherwise known session.
+
+Recognized speech is submitted immediately, not held for confirmation. A bounded
+"Heard" preview appears on the glasses while submitting and the full recognized
+text stays visible on the phone for the current turn. It is memory-only and clears
+on the next capture/text turn, new session or local disconnect. This improves
+visibility but cannot prevent a tool action caused by misrecognition; keep agent
+permissions and approvals appropriately constrained.
+
 The broker mints a private backend session ID independent of the phone-facing UUID. Each device can access only its own broker sessions. Follow-ups continue the real API-owned Hermes history. New session starts a new conversation; it does not erase old history. Existing CLI/Desktop or other-device sessions cannot be attached.
 
 Before submitting, the broker commits intent keyed by device/session/turn and digest. An identical duplicate returns the recorded turn; conflicting content is rejected. At most one unresolved turn per session and 16 globally are admitted. A restart/status loss never blindly repeats a run submission. A lost upstream receipt becomes uncertain: inspect the exact Hermes session before doing anything that could repeat effects. There is intentionally no “force retry unknown action” button.
 
-Readback can recover outputs from Hermes while they remain available. The local ledger is not an answer archive. Display text is limited to 32,000 characters, paged in roughly 260-character chunks; larger answers require the full server-side record. Rendering uses text nodes, never HTML. Actual font fit/readability requires hardware validation.
+Only positive pre-submission evidence (backend preflight/connection-establishment failure) creates terminal `rejected`. When the broker has no intent for a phone's saved ID, reconciliation durably seals that ID as rejected **before** releasing the client; a delayed original POST is refused. A 404 alone is never proof of non-submission. Existing uncertain rows are never auto-cleared, and no HTTP status class is assumed to mean an upstream action could not have run. Use `hermes even-g2 inspect` and the [operator procedure](install.md) for genuinely unresolved work or capacity. Tombstones are retained, not pruned.
+
+Readback can recover outputs from Hermes while they remain available. The local ledger is not an answer archive. Display text is limited to 32,000 characters, paged to at most 260 code points and an estimated seven body lines at 42 columns; a separate final page preserves a truncation warning. These are conservative software budgets, not measured font metrics. Larger answers require the full server-side record. Rendering uses text nodes, never HTML. Actual font fit/readability requires hardware validation.
 
 ## Stop, dismissal and failure
 
 - Stop during recording: discard audio, no new run.
+- Root double-tap: discard audio, persist/request stop if a run is active, and open the native exit dialog without awaiting network acknowledgement. Phone Stop/discard does not request exit. Resume and pending-stop IDs survive native exit.
 - Stop during submission: remember stop intent, dispatch after run acknowledgement; a failed stop remains unconfirmed and is reconciled later.
 - Backend stop receipt: accepted/stopping, not proof of terminal cancellation. Continue status polling until terminal state.
 - Dismiss: clear/reduce display state; backend work continues.
 - Disconnect/reload: not cancellation. Resume IDs remain so you can re-enter the token and reconcile.
-- Timeout/watchdog: requests backend stop for aged work; unresolved/unreachable work still consumes admission rather than silently allowing another side effect.
+- Timeout/watchdog: requests backend stop for aged work with a 30s retry interval; stop failures do not hide authoritative status/approvals. Unresolved/unreachable work still consumes admission rather than silently allowing another side effect.
 
 Stop never rolls back completed tool actions. Errors are sanitized; operator diagnosis belongs on the trusted server.
 

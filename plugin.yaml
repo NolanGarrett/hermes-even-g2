@@ -30,3 +30,11 @@ config_schema:
   stt_model:
     type: str
     default: whisper-1
+  max_sessions:
+    type: int
+    default: 64
+    description: Lifetime sessions per device (1..1000); increase without deleting replay records
+  max_turns:
+    type: int
+    default: 10000
+    description: Lifetime intent records (1..100000); increase without deleting replay records

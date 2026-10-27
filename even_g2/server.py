@@ -8,7 +8,7 @@ import time
 from contextlib import suppress
 
 from aiohttp import web
-from .backend import Backend, MAX_PCM, MAX_TEXT, MAX_OUTPUT, clean_text
+from .backend import Backend, NotSubmitted, MAX_PCM, MAX_TEXT, MAX_OUTPUT, clean_text
 from .ledger import Ledger, Refusal, TERMINAL
 
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
@@ -41,6 +41,7 @@ class Broker:
         self.requests = 0
         self.stt_active = 0
         self.watchdog = None
+        self.deadline_stops = {}
 
     async def start(self, app):
         await self.backend.open()
@@ -49,7 +50,7 @@ class Broker:
     async def expire_runs(self):
         while True:
             await asyncio.sleep(5)
-            rows = self.ledger.db.execute("SELECT * FROM turns WHERE run IS NOT NULL AND status NOT IN ('completed','failed','cancelled','interrupted') ORDER BY created LIMIT 16").fetchall()
+            rows = self.ledger.db.execute("SELECT * FROM turns WHERE run IS NOT NULL AND status NOT IN ('completed','failed','cancelled','interrupted','rejected') ORDER BY created LIMIT 16").fetchall()
             for row in rows:
                 with suppress(Refusal):
                     await self.snapshot(dict(row))
@@ -90,6 +91,8 @@ class Broker:
                 response = web.Response(status=204)
             else:
                 request['device'] = self.authenticate(request)
+                if request.path != '/health' and request.headers.get('X-Hermes-G2-Protocol') != '2':
+                    raise Refusal('matching_protocol_2_companion_required', 426)
                 if self.requests >= 16:
                     raise Refusal('busy', 429)
                 self.requests += 1
@@ -108,7 +111,7 @@ class Broker:
             response = web.json_response({'error': 'internal_error'}, status=500)
         if origin in self.config.origins:
             response.headers.update({'Access-Control-Allow-Origin': origin, 'Vary': 'Origin',
-                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Hermes-G2-Protocol',
                 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Max-Age': '600'})
         response.headers.update({'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
                                   'Referrer-Policy': 'no-referrer'})
@@ -116,7 +119,7 @@ class Broker:
 
     async def health(self, request):
         await self.backend.capabilities()
-        return web.json_response({'protocol': 1, 'status': 'ready', 'hardware': 'unverified',
+        return web.json_response({'protocol': 2, 'status': 'ready', 'hardware': 'unverified',
                                   'approvals': 'phone-only-exact-identity', 'max_audio_bytes': MAX_PCM})
 
     async def session(self, request):
@@ -137,6 +140,14 @@ class Broker:
             return web.json_response({'text': text})
         finally:
             self.stt_active -= 1
+
+    async def existing_session(self, request):
+        sid = identifier(request.match_info['sid'])
+        try:
+            self.ledger.session(request['device'], sid)
+        except Refusal:
+            raise Refusal('session_continuity_lost', 409) from None
+        return web.json_response({'session_id': sid})
 
     def scope(self, request):
         sid = identifier(request.match_info['sid'])
@@ -163,6 +174,9 @@ class Broker:
             self.ledger.update(tid, run=run, status='running')
             self.watch(tid, run)
             return web.json_response({'turn_id': tid, 'session_id': sid, 'status': 'working'}, status=202)
+        except NotSubmitted:
+            self.ledger.update(tid, status='rejected')
+            return web.json_response({'turn_id': tid, 'session_id': sid, 'status': 'rejected'})
         except BaseException:
             self.ledger.update(tid, status='uncertain')
             raise
@@ -171,6 +185,7 @@ class Broker:
         if tid in self.streams or len(self.streams) >= 16:
             return
         async def consume():
+            self.progress.pop(tid, None)  # SSE reconnection may replay from the start.
             try:
                 async for event, item in self.backend.events(run):
                     progress = self.progress.setdefault(tid, {'text': '', 'event': 'working'})
@@ -186,6 +201,8 @@ class Broker:
 
     async def snapshot(self, row):
         result = {'turn_id': row['id'], 'session_id': row['session']}
+        if row['status'] == 'rejected':
+            return {**result, 'status': 'rejected'}
         if not row['run']:
             return {**result, 'status': 'uncertain', 'message': 'Submission outcome unknown. Do not repeat. Inspect this session in Hermes.'}
         upstream = await self.backend.status(row['run'])
@@ -206,12 +223,19 @@ class Broker:
             if task:
                 task.cancel()
             self.progress.pop(row['id'], None)
+            self.deadline_stops.pop(row['id'], None)
         else:
             self.watch(row['id'], row['run'])
             result['progress'] = self.progress.get(row['id'], {'event': 'working', 'text': ''})
             if time.time() - row['created'] > self.config.run_timeout and status not in {'unknown', 'stopping'}:
-                await self.backend.stop(row['run'])
-                result['stop_requested'] = True
+                last = self.deadline_stops.get(row['id'], 0)
+                if time.monotonic() - last >= 30:
+                    self.deadline_stops[row['id']] = time.monotonic()
+                    try:
+                        await self.backend.stop(row['run'])
+                        result['stop_requested'] = True
+                    except Refusal:
+                        result['message'] = 'Deadline stop unconfirmed; inspect server. Work may continue.'
         controls = upstream.get('pending_controls', [])
         if isinstance(controls, list):
             result['approvals'] = [self.approval(p, upstream) for p in controls[:8]
@@ -245,6 +269,13 @@ class Broker:
 
     async def status(self, request):
         return web.json_response(await self.snapshot(self.scope(request)))
+
+    async def reconcile(self, request):
+        await body(request, [])
+        sid = identifier(request.match_info['sid'])
+        tid = identifier(request.match_info['tid'])
+        row = self.ledger.reconcile(request['device'], sid, tid)
+        return web.json_response(await self.snapshot(row))
 
     async def stop(self, request):
         await body(request, [])
@@ -280,9 +311,11 @@ def create_app(config, backend=None):
     app.on_cleanup.append(broker.close)
     app.router.add_get('/health', broker.health)
     app.router.add_post('/sessions', broker.session)
+    app.router.add_get('/sessions/{sid}', broker.existing_session)
     app.router.add_post('/transcribe', broker.transcribe)
     app.router.add_post('/sessions/{sid}/turns', broker.submit)
     app.router.add_get('/sessions/{sid}/turns/{tid}', broker.status)
+    app.router.add_post('/sessions/{sid}/turns/{tid}/reconcile', broker.reconcile)
     app.router.add_post('/sessions/{sid}/turns/{tid}/stop', broker.stop)
     app.router.add_post('/sessions/{sid}/turns/{tid}/approval', broker.approve)
     app.router.add_route('OPTIONS', '/{path:.*}', lambda r: web.Response(status=204))

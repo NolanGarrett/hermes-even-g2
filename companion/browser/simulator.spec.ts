@@ -27,7 +27,7 @@ test('phone simulator: voice, pagination, consent, cancellation, reconnect',asyn
   await expect(page.locator('#state')).toHaveText('idle');
   await page.locator('#new').click();
   await expect(page.locator('#state')).toHaveText('idle');
-  await page.screenshot({path:'../docs/simulator.png',fullPage:true});
+  await page.screenshot({path:process.env.UPDATE_SCREENSHOT==='1'?'../docs/simulator.png':'test-results/simulator.png',fullPage:true});
   expect(errors).toEqual([]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

@@ -7,10 +7,15 @@ from .ledger import Refusal
 
 def register(ctx):
     def setup(parser):
-        parser.add_argument('action', choices=['check', 'serve'])
+        parser.add_argument('action', choices=['check', 'serve', 'inspect'])
 
     def command(args):
         try:
+            if args.action == 'inspect':
+                from plugins.plugin_storage import plugin_data_dir
+                from .inspect import inventory
+                print(json.dumps(inventory(plugin_data_dir('hermes-even-g2')), indent=2))
+                return
             config = Config.from_context(ctx)
             if args.action == 'check':
                 from .backend import Backend
@@ -33,7 +38,7 @@ def register(ctx):
             print(f'Even G2: {exc}')
             raise SystemExit(2) from None
 
-    ctx.register_cli_command(name='even-g2', help='Check or serve the private Even G2 broker',
+    ctx.register_cli_command(name='even-g2', help='Check, serve or inspect the private Even G2 broker',
                              setup_fn=setup, handler_fn=command)
     ctx.register_command('even-g2', lambda raw: (
         'Even G2 uses its own API-owned sessions, not this conversation. '

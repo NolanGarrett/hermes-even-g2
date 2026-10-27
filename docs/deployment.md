@@ -30,6 +30,8 @@ server {
 }
 ```
 
+Preserve `X-Hermes-G2-Protocol` (value `2`) through the proxy. The broker includes it in the preflight allowlist. Non-health requests without the matching protocol header are refused before admission; use matching source-built broker and companion, not mixed alpha1 assets.
+
 Do not add permissive proxy CORS headers or strip Origin. Keep TLS verification enabled. If using an internal CA, install/trust it using your phone's supported administration flow, then validate it inside the Even WebView; Safari trust alone is not evidence. For a public CA, obtain a certificate without making your service public (for example DNS validation). WSS is not required by this implementation: the companion uses HTTPS requests/status polling and the broker consumes backend SSE internally.
 
 There are two independent origin gates:
@@ -37,7 +39,7 @@ There are two independent origin gates:
 1. `companion/app.json` network whitelist contains the **broker origin**, e.g. `https://g2.example.com`. Exact scheme/host/port; no path or wildcard. Rebuild after changing it.
 2. Broker `origins` contains the **WebView page origin**, e.g. `https://companion.example.com`. It may differ. Non-browser authenticated requests may omit Origin; requests with untrusted/null origins fail. Credentials remain mandatory.
 
-Host the static `companion/dist/` at your trusted page origin for hosted development, or use the supported Even beta flow. Avoid third-party scripts, analytics and public embedding. Static hosting must not transform the app or inject scripts. Use no-store caching for credential-bearing API replies; the client sets `cache: no-store` and never sends cookies.
+Host the static `companion/dist/` at your trusted page origin for hosted development. Beta installation follows the official Even flow, but its actual page Origin is a **blocking unverified hardware gate**: an opaque/custom origin is unsupported, and a compatible hosted beta alternative is not established. Do not infer package connectivity from Safari or a browser test. Avoid third-party scripts, analytics and public embedding. Static hosting must not transform the app or inject scripts. Use no-store caching for credential-bearing API replies; the client sets `cache: no-store` and never sends cookies.
 
 ## Separation and revocation
 

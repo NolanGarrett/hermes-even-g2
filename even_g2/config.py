@@ -48,7 +48,7 @@ class Config:
             raise ConfigError('origins: exact normalized origins required')
         if self.host not in {'127.0.0.1', '::1'}:
             raise ConfigError('host: broker binds loopback only; use an HTTPS reverse proxy')
-        if not 1 <= self.port <= 65535:
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ConfigError('port: expected 1..65535')
         if len(self.backend_key) < 16:
             raise ConfigError('EVEN_G2_BACKEND_KEY: set the server-side Hermes API key (16+ characters)')
@@ -61,7 +61,8 @@ class Config:
             raise ConfigError('device_hashes: each device must have a distinct token')
         if not 1 <= self.request_timeout <= 120 or not 30 <= self.run_timeout <= 3600:
             raise ConfigError('timeouts: request 1..120 and run 30..3600 seconds')
-        if not 1 <= self.max_sessions <= 1000 or not 1 <= self.max_turns <= 100000:
+        if (type(self.max_sessions) is not int or type(self.max_turns) is not int or
+                not 1 <= self.max_sessions <= 1000 or not 1 <= self.max_turns <= 100000):
             raise ConfigError('resource bounds: sessions 1..1000, turns 1..100000')
         return self
 
@@ -80,4 +81,6 @@ class Config:
             stt_key=os.environ.get('EVEN_G2_STT_KEY', ''),
             stt_model=get('stt_model', default='whisper-1'),
             port=get('port', default=8766),
+            max_sessions=get('max_sessions', default=64),
+            max_turns=get('max_turns', default=10000),
         ).validate()

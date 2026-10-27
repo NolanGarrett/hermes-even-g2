@@ -114,13 +114,15 @@ async def test_public_runtime_plugin_cli_real_tool_and_history(tmp_path):
     assert doctor.returncode==0,doctor.stdout+doctor.stderr
     command=await asyncio.to_thread(subprocess.run,[cli,'even-g2','check'],env=env,cwd=work,capture_output=True,text=True,timeout=60)
     assert command.returncode==2 and 'EVEN_G2_BACKEND_KEY' in command.stdout,command.stdout+command.stderr
+    inspected=await asyncio.to_thread(subprocess.run,[cli,'even-g2','inspect'],env=env,cwd=work,capture_output=True,text=True,timeout=60)
+    assert inspected.returncode==0 and json.loads(inspected.stdout)=={'sessions':0,'turns':0,'unresolved':[]},inspected.stdout+inspected.stderr
     log=tmp_path/'gateway.log';handle=log.open('w');proc=subprocess.Popen([cli,'gateway','run','--no-supervise'],env=env,cwd=work,stdout=handle,stderr=subprocess.STDOUT)
     client=None;broker_proc=None
     try:
         await wait_ready(api_url,proc,log)
         env['EVEN_G2_BACKEND_KEY']='synthetic-backend-key-for-tests'
         broker_proc=subprocess.Popen([cli,'even-g2','serve'],env=env,cwd=work,stdout=handle,stderr=subprocess.STDOUT)
-        client=aiohttp.ClientSession(base_url=broker_url,headers={'Authorization':'Bearer '+TOKEN})
+        client=aiohttp.ClientSession(base_url=broker_url,headers={'Authorization':'Bearer '+TOKEN,'X-Hermes-G2-Protocol':'2'})
         for _ in range(60):
             try:
                 async with client.get('/health') as response:
@@ -129,6 +131,10 @@ async def test_public_runtime_plugin_cli_real_tool_and_history(tmp_path):
             await asyncio.sleep(.25)
         r=await client.get('/health');assert r.status==200,await r.text()
         sid=str(uuid.uuid4());await client.post('/sessions',json={'session_id':sid})
+        missing=str(uuid.uuid4());sealed=await client.post(f'/sessions/{sid}/turns/{missing}/reconcile',json={})
+        assert (await sealed.json())['status']=='rejected'
+        late=await client.post(f'/sessions/{sid}/turns',json={'turn_id':missing,'text':'delayed must never run'})
+        assert late.status==409 and not fixture.requests
         async def turn(text):
             tid=str(uuid.uuid4());p=f'/sessions/{sid}/turns'
             r=await client.post(p,json={'turn_id':tid,'text':text});assert r.status==202,await r.text()

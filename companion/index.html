@@ -10,9 +10,10 @@
 <section><div class="row"><h2>Glasses preview</h2><span id="state">offline</span></div>
 <pre id="display" aria-label="Glasses text preview">Connect in Even Hub, or open the explicitly labeled software simulator below.</pre>
 <p id="status" role="status" aria-live="polite">Not connected.</p>
+<pre id="heard" aria-label="Recognized speech"></pre>
 <div class="buttons"><button id="record">Tap to speak</button><button id="cancel" class="danger">Stop / discard</button><button id="dismiss">Dismiss display</button></div>
 <div class="buttons"><button id="previous">Previous page</button><button id="next">Next page</button><button id="reconnect">Reconcile status</button></div>
-<p>Tap to record, tap again to send. Hold/release is optional. Double tap discards recording or requests stop. Swipes change answer pages. OS menus can intercept gestures; phone controls remain available.</p>
+<p>Tap to record, tap again to send. Hold/release is optional. Double tap discards recording or requests stop, then opens the system exit dialog (not proof of backend cancellation). Swipes change answer pages. OS menus can intercept gestures; phone controls remain available. Recognized speech is submitted immediately, not held for confirmation.</p>
 </section>
 <section id="simulation" hidden><h2>Software input harness</h2><p>These controls synthesize SDK events. They do not exercise Bluetooth, G2 optics, mic hardware, locked-phone behavior or real inference.</p>
 <button id="tap">Synthetic tap</button><button id="hold">Synthetic hold</button><button id="release">Synthetic release</button><button id="double">Synthetic double tap</button><button id="synthetic">Inject synthetic PCM</button>
@@ -20,5 +21,6 @@
 <section><h2>Phone controls</h2><label for="text">Text fallback (same agent session)</label><textarea id="text" maxlength="8000" rows="3" placeholder="Ask a follow-up…"></textarea><button id="send">Send text</button>
 <div id="approvals" aria-live="polite"></div><div class="buttons"><button id="new">New session</button><button id="disconnect">Disconnect locally</button></div>
 <pre id="session"></pre><p>New session does not erase Hermes history. Stop is not rollback. Dismiss/disconnect do not cancel work already submitted. Unknown outcomes require server inspection before repeating.</p></section>
+<button id="forget-lost" hidden>Forget lost session locally — outcome remains unknown</button>
 <footer><a href="?simulator=1">Open software simulator (mocked)</a> · <a href="?">Even Hub mode</a><p>No glasses speakers or camera. No background or lock-screen guarantee.</p></footer>
 </main><script type="module" src="/src/main.ts"></script></body></html>

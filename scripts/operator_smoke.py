@@ -19,12 +19,13 @@ async def main():
     if not origin.startswith('https://'):raise SystemExit('A trusted HTTPS broker is required')
     token=os.environ['EVEN_G2_DEVICE_TOKEN']
     sid=str(uuid.uuid4())
-    async with aiohttp.ClientSession(headers={'Authorization':'Bearer '+token},timeout=aiohttp.ClientTimeout(total=35),trust_env=False) as http:
+    async with aiohttp.ClientSession(headers={'Authorization':'Bearer '+token,'X-Hermes-G2-Protocol':'2'},timeout=aiohttp.ClientTimeout(total=35),trust_env=False) as http:
         async def request(method,path,**kw):
             async with http.request(method,origin+path,allow_redirects=False,**kw) as response:
                 if response.status>=300:raise SystemExit(f'Broker refused ({response.status}); do not blindly retry')
                 return await response.json()
-        await request('GET','/health');await request('POST','/sessions',json={'session_id':sid})
+        if (await request('GET','/health')).get('protocol')!=2:raise SystemExit('Matching protocol 2 broker required')
+        await request('POST','/sessions',json={'session_id':sid})
         text='Remember the synthetic marker violet-g2. Use the terminal tool to run exactly printf G2_TOOL_OK in your configured test workspace, then report the result. Do not perform any other action.'
         if args.wav:
             with wave.open(args.wav) as audio:
@@ -37,7 +38,7 @@ async def main():
             for _ in range(120):
                 s=await request('GET',path+'/'+tid)
                 if s['status']=='waiting_for_approval' or s.get('handoff'):raise SystemExit('Approval requires trusted phone/server review; no automatic approval. Inspect session '+sid)
-                if s['status'] in {'completed','failed','cancelled','interrupted','uncertain','unknown'}:
+                if s['status'] in {'completed','failed','cancelled','interrupted','rejected','uncertain','unknown'}:
                     print('Status:',s['status'],'Session:',sid,'Turn:',tid)
                     if s['status']!='completed':raise SystemExit('Inspect exact run before retrying')
                     print('Answer:',s.get('output',''));break

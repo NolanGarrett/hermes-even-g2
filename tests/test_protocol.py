@@ -68,7 +68,7 @@ class Upstream:
 async def setup(tmp_path):
     u=Upstream();r=TestServer(u.app());await r.start_server();url=str(r.make_url('')).rstrip('/')
     config=cfg(tmp_path,url,stt_url=url+'/stt');c=TestClient(TestServer(create_app(config)));await c.start_server()
-    c.session.headers.update({'Authorization':'Bearer '+TOKEN,'Origin':ORIGIN})
+    c.session.headers.update({'Authorization':'Bearer '+TOKEN,'Origin':ORIGIN,'X-Hermes-G2-Protocol':'2'})
     yield c,u,config
     u.hold.set();await c.close();await r.close()
 async def begin(c,text='hello',sid=None,tid=None):
@@ -107,7 +107,7 @@ async def test_duplicate_conflict_and_restart(setup):
     for _ in range(2):assert (await c.post(f'/sessions/{sid}/turns',json={'turn_id':tid,'text':'hello'})).status==200
     assert len(u.calls)==1
     assert (await c.post(f'/sessions/{sid}/turns',json={'turn_id':tid,'text':'changed'})).status==409
-    await c.close();resumed=TestClient(TestServer(create_app(config)));await resumed.start_server();resumed.session.headers['Authorization']='Bearer '+TOKEN
+    await c.close();resumed=TestClient(TestServer(create_app(config)));await resumed.start_server();resumed.session.headers.update({'Authorization':'Bearer '+TOKEN,'X-Hermes-G2-Protocol':'2'})
     try:assert (await resumed.get(p)).status==200;assert len(u.calls)==1
     finally:await resumed.close()
 async def test_uncertainty_no_replay(setup):
@@ -150,7 +150,7 @@ async def test_fragmented_json_read_to_eof(setup):
 async def test_backend_version_guard(setup):
     c,u,_=setup;u.server_version='0.22.6'
     assert (await c.get('/health')).status==503
-    with pytest.raises(Refusal,match='unsupported_hermes_version'):
+    with pytest.raises(Refusal,match='backend_preflight_refused'):
         await c.app['broker'].backend.submit('never submit',uid(),uid())
     assert not u.calls
 async def test_deadline_stop_and_identity_mismatch(setup):

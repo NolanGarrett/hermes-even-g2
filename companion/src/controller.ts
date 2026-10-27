@@ -1,3 +1,5 @@
+import {RequestRefusal} from './http';
+
 export type State = 'idle'|'listening'|'transcribing'|'working'|'answering'|'approval'|'offline'|'error';
 export type Approval = {request_id:string; execution_generation:number; description:string};
 export type Snapshot = {turn_id:string; session_id:string; status:string; output?:string; truncated?:boolean;
@@ -5,26 +7,35 @@ export type Snapshot = {turn_id:string; session_id:string; status:string; output
   progress?:{event:string; text:string}};
 export interface Transport {
   health():Promise<unknown>;
-  session(id:string):Promise<unknown>;
+  session(id:string,existing?:boolean):Promise<unknown>;
   transcribe(pcm:Uint8Array, signal:AbortSignal):Promise<string>;
   submit(session:string, turn:string, text:string):Promise<Snapshot>;
   status(session:string, turn:string):Promise<Snapshot>;
+  reconcile(session:string, turn:string):Promise<Snapshot>;
   stop(session:string, turn:string):Promise<unknown>;
   approve(session:string, turn:string, approval:Approval, choice:'once'|'deny'):Promise<unknown>;
 }
 export interface Display {
   audio(open:boolean):Promise<void>;
   show(text:string):Promise<void>;
+  exit():Promise<void>;
 }
 export interface Resume {session:string; turn?:string; stopRequested?:boolean}
 export const MAX_PCM = 960000;
-const terminal = new Set(['completed','failed','cancelled','interrupted']);
+const terminal = new Set(['completed','failed','cancelled','interrupted','rejected']);
 
 export function pages(text:string, size=260):string[] {
-  const chars = Array.from(text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0,32000));
+  const chars = Array.from(text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')).slice(0,32000);
   const result:string[] = [];
   while(chars.length) {
     let n = Math.min(size, chars.length);
+    // Conservative estimate, not a claim about physical font metrics.
+    let row=1,column=0;
+    for(let i=0;i<n;i++){
+      if(chars[i]==='\n'){row++;column=0;}
+      else if(++column>42){row++;column=1;}
+      if(row>7){n=Math.max(1,i);break;}
+    }
     if (n < chars.length) {
       const space = chars.slice(0,n).lastIndexOf(' ');
       if (space > n/2) n = space+1;
@@ -37,15 +48,18 @@ export function pages(text:string, size=260):string[] {
 export class Controller {
   state:State = 'idle';
   message = 'Tap to speak. Double tap cancels. Swipe changes page.';
+  transcript = '';
   answer:string[] = [];
   page = 0;
   approvals:Approval[] = [];
   resume:Resume;
   active = false;
   connected = false;
+  continuityLost = false;
   stopRequested = false;
   private stopAcknowledged = false;
   private stopSending = false;
+  private stopBlocked = false;
   private submitting = false;
   private microphonePending = false;
   private displayHealthy = true;
@@ -56,6 +70,8 @@ export class Controller {
   private abort?:AbortController;
   private micQueue:Promise<void> = Promise.resolve();
   private painting:Promise<void> = Promise.resolve();
+  private painted = '';
+  private exiting = false;
   private polling = false;
   private busyGesture = false;
   private lastTap = 0;
@@ -80,7 +96,10 @@ export class Controller {
       ? `${this.page+1}/${this.answer.length}\n${this.answer[this.page]}`
       : `${this.state.toUpperCase()}\n${this.message}`;
     // Sequential SDK writes avoid out-of-order display completion.
-    this.painting = this.painting.catch(()=>{}).then(()=>this.display.show(text)).catch(()=>{
+    this.painting = this.painting.catch(()=>{}).then(async()=>{
+      if(!this.displayHealthy||text===this.painted)return;
+      await this.display.show(text);this.painted=text;
+    }).catch(()=>{
       this.displayHealthy=false;
       this.state = 'error'; this.message = 'Display disconnected. Stopping microphone; check phone.';
       this.changed(); void this.discard();
@@ -90,18 +109,27 @@ export class Controller {
   async connect() {
     if(!await this.discard())return;
     try {
+      await this.painting;
+      if(!this.displayHealthy){await this.display.show('RECONNECTING\nChecking status, never replaying work.');this.displayHealthy=true;this.painted='';}
       await this.api.health();
-      await this.api.session(this.resume.session);
+      await this.api.session(this.resume.session,Boolean(this.resume.turn));
+      this.continuityLost=false;
       this.connected = true;
       this.save(this.resume);
       if (this.resume.turn) await this.poll();
       else this.set('idle','Tap to speak. Hold/release also supported.');
-    } catch {this.connected=false;this.set('offline','Connection failed. Check token, TLS, origin and network.');}
+    } catch(e) {
+      this.connected=false;
+      if(e instanceof RequestRefusal&&e.code==='session_continuity_lost'){
+        this.continuityLost=true;
+        this.set('error','Broker has no accessible record of this session. Outcome unknown: inspect retired ledger/Hermes. Never repeat blindly.');
+      }else this.set('offline',e instanceof RequestRefusal?e.message:'Connection failed. Check token, TLS, origin and network.');
+    }
   }
   async start() {
-    if (!this.connected || this.active || this.microphonePending || !this.displayHealthy || ['listening','transcribing'].includes(this.state)) return;
+    if (!this.connected || this.active || this.exiting || this.microphonePending || !this.displayHealthy || ['listening','transcribing'].includes(this.state)) return;
     const epoch = ++this.epoch;
-    this.chunks=[];this.bytes=0;this.answer=[];this.approvals=[];
+    this.chunks=[];this.bytes=0;this.answer=[];this.approvals=[];this.transcript='';
     this.microphonePending=true;
     this.set('listening','Listening (30 seconds max). Tap to send; double tap discards.');
     this.captureTimer=setTimeout(()=>void this.finish(),30000);
@@ -121,7 +149,9 @@ export class Controller {
     clearTimeout(this.captureTimer);
     this.set('transcribing','Microphone stopping; transcribing speech.');
     try {
-      await this.mic(false);
+      try {await this.mic(false);} catch {
+        this.set('error','Microphone stop unconfirmed. Close the app / disconnect glasses.');return;
+      }
       if(epoch!==this.epoch) return;
       const pcm=new Uint8Array(this.bytes);
       let offset=0;for(const chunk of this.chunks){pcm.set(chunk,offset);offset+=chunk.length;}
@@ -130,21 +160,26 @@ export class Controller {
       this.abort=new AbortController();
       const text=await this.api.transcribe(pcm,this.abort.signal);
       if(epoch!==this.epoch) return;
+      this.transcript=text;
       await this.send(text, true);
     } catch {if(epoch===this.epoch)this.set('error','Transcription failed. No agent request was submitted.');}
     finally {this.chunks=[];this.bytes=0;}
   }
   async send(text:string, fromSpeech=false) {
-    if(this.active || !this.connected || !text.trim() || text.length>8000 ||
-       (['listening','transcribing'].includes(this.state) && !fromSpeech)) return;
-    this.active=true;this.stopRequested=false;this.stopAcknowledged=false;this.approvals=[];this.submitting=true;
+    if(this.active || this.exiting || !this.connected || !text.trim() || Array.from(text).length>8000 ||
+       (['listening','transcribing'].includes(this.state) && !fromSpeech)) {
+      if(fromSpeech)this.set('error','Recognized speech was not submitted. Check connection, length and current turn.');
+      return;
+    }
+    this.active=true;this.stopRequested=false;this.stopAcknowledged=false;this.stopBlocked=false;this.approvals=[];this.submitting=true;
     delete this.resume.stopRequested;
     this.resume.turn=crypto.randomUUID();this.save(this.resume);
-    this.set('working','Request submitted. Double tap requests stop (not rollback).');
+    if(!fromSpeech)this.transcript='';
+    this.set('working',fromSpeech?`Heard: ${Array.from(text).slice(0,120).join('')}\nDouble tap stops (not rollback).`:'Request submitted. Double tap requests stop (not rollback).');
     try {
       const snap=await this.api.submit(this.resume.session,this.resume.turn,text);
       this.apply(snap);
-    } catch {this.set('offline','Submission outcome uncertain. Reconnect checks status; do not repeat.');}
+    } catch(e) {this.set('offline',e instanceof RequestRefusal?e.message:'Submission outcome uncertain. Reconnect checks status; do not repeat.');}
     finally {this.submitting=false;if(this.stopRequested&&this.active)await this.requestStop();}
   }
   async discard() {
@@ -166,11 +201,15 @@ export class Controller {
     } else if(stopped) this.set('idle','Recording discarded. No new agent request.');
   }
   private async requestStop(){
-    if(!this.resume.turn||this.stopSending||this.stopAcknowledged||!this.active)return;
+    if(!this.resume.turn||this.stopSending||this.stopAcknowledged||this.stopBlocked||!this.active)return;
     this.stopSending=true;
     try {await this.api.stop(this.resume.session,this.resume.turn);this.stopAcknowledged=true;
       this.set('working','Backend accepted stop. Waiting for terminal status; this is not rollback.');
-    } catch {this.set('offline','Stop not confirmed. Reconnect and inspect server; do not repeat the action.');}
+    } catch(e) {
+      if(e instanceof RequestRefusal&&e.code==='submission_uncertain_use_server'){
+        this.stopBlocked=true;this.set('error','Stop requires server inspection: submission outcome unknown. Stop intent retained; do not repeat.');
+      }else this.set('offline','Stop not confirmed. Reconnect and inspect server; do not repeat the action.');
+    }
     finally {this.stopSending=false;}
   }
   async dismiss() {
@@ -185,9 +224,18 @@ export class Controller {
     }
   }
   async poll() {
-    if(!this.resume.turn || this.polling || !this.connected) return;
+    if(!this.resume.turn || this.polling || !this.connected || this.continuityLost) return;
     this.polling=true;
-    try {this.apply(await this.api.status(this.resume.session,this.resume.turn));
+    try {
+      let snapshot:Snapshot;
+      try {snapshot=await this.api.status(this.resume.session,this.resume.turn);}
+      catch(e){
+        if(!(e instanceof RequestRefusal)||e.status!==404||e.code!=='not_found')throw e;
+        // A bare 404 is not proof of non-submission: seal a missing intent
+        // atomically so a delayed original POST cannot execute afterwards.
+        snapshot=await this.api.reconcile(this.resume.session,this.resume.turn);
+      }
+      this.apply(snapshot);
       if(this.stopRequested&&!this.submitting)await this.requestStop();}
     catch {this.set('offline','Status unavailable. Work may continue. Reconnect never resubmits.');}
     finally {this.polling=false;}
@@ -197,12 +245,16 @@ export class Controller {
       this.set('error','Response identity mismatch. Stop using this connection.');this.connected=false;return;
     }
     this.approvals=s.approvals??[];
+    if(!['uncertain','unknown'].includes(s.status))this.stopBlocked=false;
     if(terminal.has(s.status)) {
       this.active=false;
       delete this.resume.stopRequested;this.save(this.resume);
       if(s.status==='completed') {
-        this.answer=pages((s.output||'No text returned.')+(s.truncated?'\n[Display truncated. Full answer in Hermes.]':''));
+        this.answer=pages(s.output||'No text returned.');
+        if(s.truncated)this.answer.push('[Display truncated. Full answer in Hermes.]');
         this.page=0;this.set('answering','');
+      } else if(s.status==='rejected') {
+        this.set('idle','Not submitted. This intent is sealed against delayed delivery. Fix the connection, then start a new turn.');
       } else this.set(s.status==='cancelled'?'idle':'error',
           s.status==='cancelled'?'Backend confirmed cancelled. Earlier effects are not undone.':`Backend ${s.status}. Inspect Hermes before repeating.`);
     } else if(s.status==='waiting_for_approval' || s.handoff) {
@@ -211,7 +263,7 @@ export class Controller {
       this.set('error','Outcome unknown. Inspect exact session in Hermes. Do not repeat or reset to retry.');
     } else {
       this.set('working',s.status==='stopping'||this.stopRequested||s.stop_requested?'Stopping; awaiting terminal acknowledgement.':
-        (s.progress?.event?.startsWith('tool.')?'Hermes is using a tool.':
+        (s.message?s.message:s.progress?.event?.startsWith('tool.')?'Hermes is using a tool.':
         s.progress?.text?`Partial: ${s.progress.text.slice(-200)}`:'Hermes is working.'));
     }
   }
@@ -225,7 +277,14 @@ export class Controller {
   async newSession() {
     if(this.active) {this.set('error','Resolve or stop the current turn before starting a new session.');return;}
     if(!await this.discard()) return;
-    this.resume={session:crypto.randomUUID()};this.save(this.resume);this.answer=[];this.approvals=[];
+    this.resume={session:crypto.randomUUID()};this.save(this.resume);this.answer=[];this.approvals=[];this.transcript='';
+    await this.connect();
+  }
+  async forgetLostSession(acknowledged:boolean){
+    if(!this.continuityLost||!acknowledged||!await this.discard())return;
+    this.resume={session:crypto.randomUUID()};this.save(this.resume);
+    this.active=false;this.stopRequested=false;this.stopBlocked=false;this.stopAcknowledged=false;
+    this.continuityLost=false;this.answer=[];this.approvals=[];this.transcript='';
     await this.connect();
   }
   scroll(direction:number) {
@@ -234,12 +293,30 @@ export class Controller {
   }
   async gesture(event:{textEvent?:{eventType?:number};sysEvent?:{eventType?:number}}) {
     const sys=event.sysEvent?.eventType;
-    if([5,6,7].includes(sys??-1)){await this.background();return;}
+    if([4,5,6,7].includes(sys??-1)){await this.background();return;}
+    if(sys===3||event.textEvent?.eventType===3){
+      if(!this.exiting){
+        this.exiting=true;
+        try {
+          const stopped=await this.discard();
+          // Persist stop intent before the native dialog; do not wait for the
+          // network to let users exit. Backend receipt is still not rollback.
+          if(this.active){
+            this.stopRequested=true;this.resume.stopRequested=true;this.save(this.resume);
+            if(!this.submitting)void this.requestStop();
+          }else if(stopped)this.set('idle','Recording discarded. Exit dialog requested.');
+          await this.display.exit();
+        }
+        catch {this.set('error','Exit dialog unavailable. Close from the Even App.');}
+        finally {this.exiting=false;}
+      }
+      return;
+    }
     if(sys===9){await this.start();return;}
     if(sys===10){await this.finish();return;}
     if(!event.textEvent) return; // An absent event must never become a click.
     const kind=event.textEvent.eventType??0;
-    if(kind===3){await this.cancel();return;}
+
     if(kind===1){this.scroll(-1);return;}
     if(kind===2){this.scroll(1);return;}
     if(kind!==0||this.busyGesture||Date.now()-this.lastTap<250)return;

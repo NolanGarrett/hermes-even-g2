@@ -6,9 +6,10 @@ export class Simulator implements Transport,Display {
   texts:string[]=[];
   constructor(readonly preview:(s:string)=>void){}
   async health(){return {simulated:true};}
-  async session(_id:string){return {};}
+  async session(_id:string,_existing=false){return {};}
   async audio(open:boolean){this.recording=open;}
   async show(text:string){this.preview(text);}
+  async exit(){this.preview('SIMULATED system exit dialog. No native app was closed.');}
   async transcribe(_pcm:Uint8Array,_signal:AbortSignal){return 'Synthetic voice input from the simulator.';}
   async submit(session:string,turn:string,text:string){
     this.texts.push(text);
@@ -26,6 +27,7 @@ export class Simulator implements Transport,Display {
     return {...s};
   }
   async status(_session:string,turn:string){const s=this.turns.get(turn);if(!s)throw new Error('Simulator resets on reload');return {...s};}
+  async reconcile(session:string,turn:string){return this.status(session,turn);}
   async stop(_session:string,turn:string){const s=this.turns.get(turn);if(s)s.status='cancelled';return {};}
   async approve(_session:string,turn:string,_approval:Approval,choice:'once'|'deny'){
     const s=this.turns.get(turn)!;s.approvals=[];s.status='completed';s.output=`SIMULATED approval decision: ${choice}. No tool ran.`;return {};

@@ -4,7 +4,7 @@ import time
 import uuid
 from pathlib import Path
 
-TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted'}
+TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted', 'rejected'}
 
 
 class Refusal(Exception):
@@ -68,16 +68,31 @@ class Ledger:
             if old['session'] != sid or old['digest'] != digest:
                 raise Refusal('idempotency_conflict')
             return dict(old), False
-        unresolved = self.db.execute("SELECT id FROM turns WHERE session=? AND status NOT IN ('completed','failed','cancelled','interrupted')", (sid,)).fetchone()
+        unresolved = self.db.execute("SELECT id FROM turns WHERE session=? AND status NOT IN ('completed','failed','cancelled','interrupted','rejected')", (sid,)).fetchone()
         if unresolved:
             raise Refusal('previous_turn_unresolved')
-        if self.db.execute("SELECT count(*) FROM turns WHERE status NOT IN ('completed','failed','cancelled','interrupted')").fetchone()[0] >= 16:
+        if self.db.execute("SELECT count(*) FROM turns WHERE status NOT IN ('completed','failed','cancelled','interrupted','rejected')").fetchone()[0] >= 16:
             raise Refusal('active_capacity_reconcile_before_new_work', 429)
         if self.db.execute('SELECT count(*) FROM turns').fetchone()[0] >= self.max_turns:
             raise Refusal('intent_capacity_operator_cleanup_required', 429)
         with self.db:
             self.db.execute('INSERT INTO turns VALUES (?,?,?,NULL,?,?)', (tid, sid, digest, 'submitting', time.time()))
         return self.turn(device, sid, tid), True
+
+    def reconcile(self, device, sid, tid):
+        # No await between lookup and tombstone. A delayed submit either reserved
+        # first (return its state), or cannot execute after this durable refusal.
+        self.session(device, sid)
+        old = self.db.execute('SELECT * FROM turns WHERE id=?', (tid,)).fetchone()
+        if old:
+            return self.turn(device, sid, tid)
+        if self.db.execute("SELECT count(*) FROM turns WHERE session=? AND digest=''", (sid,)).fetchone()[0] >= 32:
+            raise Refusal('reconciliation_capacity_use_new_session', 429)
+        if self.db.execute('SELECT count(*) FROM turns').fetchone()[0] >= self.max_turns:
+            raise Refusal('intent_capacity_operator_cleanup_required', 429)
+        with self.db:
+            self.db.execute('INSERT INTO turns VALUES (?,?,?,NULL,?,?)', (tid, sid, '', 'rejected', time.time()))
+        return self.turn(device, sid, tid)
 
     def update(self, tid, *, run=None, status=None):
         with self.db:

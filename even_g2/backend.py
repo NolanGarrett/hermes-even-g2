@@ -14,6 +14,10 @@ MAX_TEXT = 8000
 MAX_OUTPUT = 32000
 
 
+class NotSubmitted(Refusal):
+    """Positive evidence that this attempt never reached the runs POST."""
+
+
 async def bounded_body(response, limit):
     data = bytearray()
     async for chunk in response.content.iter_chunked(8192):
@@ -62,6 +66,8 @@ class Backend:
                 if not isinstance(result, dict):
                     raise ValueError()
                 return result
+        except aiohttp.ClientConnectorError:
+            raise NotSubmitted('backend_connection_not_established', 503) from None
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             raise Refusal('backend_unavailable', 503) from None
 
@@ -76,7 +82,10 @@ class Backend:
         return caps
 
     async def submit(self, text, sid, tid):
-        await self.capabilities()
+        try:
+            await self.capabilities()
+        except Refusal:
+            raise NotSubmitted('backend_preflight_refused', 503) from None
         return await self.json('POST', '/v1/runs', {'input': text, 'session_id': sid}, key=tid)
 
     async def status(self, run):

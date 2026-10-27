@@ -8,11 +8,17 @@ This is a software-qualified preview, not a claim of tested glasses, Bluetooth, 
 
 ## What is included
 
+Current `main` contains **unreleased review fixes (broker protocol 2)**. The immutable
+`v0.1.0-alpha.1` tag and downloads are historical protocol-1 software and do **not**
+contain these fixes. Install the plugin and rebuild the companion from the same
+reviewed source commit; do not mix alpha1 downloads with main. No new release or
+marketplace submission is implied. See [review decisions](docs/review-decisions.md).
+
 - Real SDK 0.0.16 companion, not a proprietary/unavailable client.
-- Native directory plugin: `hermes even-g2 check` and `hermes even-g2 serve`. Import/registration does not launch services.
+- Native directory plugin: `hermes even-g2 check`, `serve` and read-only `inspect`. Import/registration does not launch services.
 - Explicit capture, 30-second ceiling, text fallback, contextual follow-ups, progress, errors, paging and new sessions.
 - Phone-only full-request approval (`once` or `deny`), bound to canonical pending prompt and execution generation. No glasses auto-approval.
-- Backend-acknowledged cancellation, durable intent deduplication and status-only reconnection. Stop is not rollback.
+- Backend-acknowledged cancellation, durable intent deduplication and no-replay reconciliation. Missing intents are durably sealed before declaring them unsubmitted. Stop is not rollback.
 - Exact-origin HTTPS, per-device revocable tokens, no phone-side Hermes/provider credential, no telemetry or local conversation database.
 - Deterministic simulator and a composed software test through the real public Hermes runtime. Mocked STT/model/Even hardware are explicitly labeled.
 
@@ -31,12 +37,16 @@ This is a software-qualified preview, not a claim of tested glasses, Bluetooth, 
 ## Quick start
 
 1. Use a dedicated least-privilege Hermes 0.22.5 profile with its authenticated API server on loopback. Keep its tools/approval policy intact. [Install/configuration](docs/install.md).
-2. Install this plugin with the supported Hermes plugin mechanism (pin the release's exact commit for reproducibility):
+2. Clone the current reviewed source and install that exact commit with the supported plugin mechanism:
    ```sh
-   hermes plugins install NolanGarrett/hermes-even-g2 --enable
+   git clone https://github.com/NolanGarrett/hermes-even-g2.git
+   cd hermes-even-g2
+   git checkout --detach REVIEWED_FULL_COMMIT
+   hermes plugins install NolanGarrett/hermes-even-g2 --ref "$(git rev-parse HEAD)" --enable
    ```
-   The GitHub release's plugin ZIP is an alternative directory install; it is not a PyPI package.
+   The historical GitHub release's ZIP is an alternative only for the old alpha1 pair; it is not a PyPI package or the reviewed main build.
    Accept the dependency prompt; unattended installs require explicit `--yes-deps`. Verify the plugin is enabled, not merely downloaded.
+   Replace `REVIEWED_FULL_COMMIT` with the reviewed full commit ID; a fresh clone alone tracks moving main.
 3. Configure the broker's exact trusted WebView origin and device token hash. Supply `EVEN_G2_BACKEND_KEY` and, for a remote STT provider, `EVEN_G2_STT_KEY` in the server process environment. Never put these keys into the companion.
 4. Run `hermes even-g2 check`, then explicitly run `hermes even-g2 serve` behind your private HTTPS reverse proxy. This project does not configure your VPN, TLS, firewall or service manager.
 5. Clone/download the source, set your broker's exact HTTPS origin in `companion/app.json` network whitelist, and build:
@@ -46,7 +56,7 @@ This is a software-qualified preview, not a claim of tested glasses, Bluetooth, 
    npm run build
    npm run pack
    ```
-6. Enroll in Even Hub and install your deployment-specific package using the [build/beta guide](docs/even-hub.md). Enter only your revocable device token on the phone. Keep the app foregrounded until hardware gates pass.
+6. Enroll in Even Hub and install your deployment-specific package using the [build/beta guide](docs/even-hub.md). **First hardware gate: establish the real packaged WebView Origin and prove it can pass the strict broker policy.** No compatible packaged origin is hardware-verified yet. Enter only your revocable device token on the phone. Keep the app foregrounded until hardware gates pass.
 
 Release companion assets use the reserved `https://g2.example.com` origin. They are valid **deployment templates**, not a hosted service and not a universally connectable package. Rebuild with your exact origin; weakening the whitelist is not a setup shortcut.
 

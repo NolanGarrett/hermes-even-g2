@@ -6,6 +6,19 @@ Use public Hermes v0.22.5, isolated disposable HOME/HERMES_HOME, a sanitized env
 
 Run Python protocol/runtime tests, TypeScript tests/build, browser simulator, npm audit and package build as documented in [verification](docs/verification.md). Add a focused regression for behavior changes. Keep all writes in one source branch; do not publish generated logs with host paths or credentials.
 
+Maintain the protocol-2 pairing gate and test both mixed-version directions. A missing
+status response is not proof of non-execution: test the delayed-submit race against
+durable reconciliation, and retain uncertain records. Native lifecycle changes need
+SDK-serializer and synthetic-host/browser checks, with physical behavior still
+marked unverified. Prefer precise device/lifecycle docs over contradictory FAQ
+summaries, and record disagreement rather than inventing firmware guarantees.
+
+Normal browser checks write screenshots to ignored test output. Refresh the public
+simulator screenshot only with the explicit update flag, inspect it, and commit
+before packaging. Packages require clean source, rebuild ignored companion outputs,
+and carry a commit suffix. Preserve
+historical alpha1 tags/assets; reviewed main fixes require matching source installs.
+
 Pull requests should describe the changed boundary, actual commands/results, mocked versus live parts, and hardware status. Report only hardware combinations you personally tested (app/SDK/firmware/phone OS and foreground/background state). Screenshots must contain synthetic data and clearly identify simulation.
 
 Original contributions are MIT licensed. Preserve third-party license notices. Do not copy unlicensed integrations or infer a software license from a data-only NOTICE file. No account setup, marketplace submission or package-registry release is part of CI.
